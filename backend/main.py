@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from typing import List
 
@@ -9,40 +9,51 @@ class Item(BaseModel):
     name: str
     price: float
 
-items_db = [
-    {"id": 1, "name": "Laptop", "price": 999.99},
-    {"id": 2, "name": "Mouse", "price": 19.99}
+# Initialize items_db with Item objects for consistency and type safety
+items_db: List[Item] = [
+    Item(id=1, name="Laptop", price=999.99),
+    Item(id=2, name="Mouse", price=19.99)
 ]
 
 @app.get("/items", response_model=List[Item])
 def get_items():
-    # BUG: Items db contains dicts, but pydantic items require validation
-    # This might crash or return incorrect datatypes if items are modified
-    # Logical bug: it doesn't correctly return Item instances
+    # Fix: items_db now contains Item objects, so it directly matches the response_model.
+    # Pydantic will handle the serialization from Item objects to JSON array of objects.
     return items_db
 
-@app.get("/items/{item_id}")
+@app.get("/items/{item_id}", response_model=Item) # Added response_model for consistency
 def get_item(item_id: int):
-    # BUG: Type mismatch bug - comparing int to str
+    # Fix: Compare integers directly. Access 'id' attribute of Item object.
     for item in items_db:
-        if item["id"] == str(item_id):
+        if item.id == item_id:
             return item
-    # Semantic bug: Always returns 404 even if item exists because of the type mismatch
-    raise HTTPException(status_code=404, detail="Item not found")
+    # Fix: Raise 404 with a clear message if item not found.
+    raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found")
 
-@app.post("/items")
+@app.post("/items", response_model=Item, status_code=201) # Added response_model and status_code 201 Created
 def create_item(item: Item):
-    # BUG: Mutating items_db without checking duplicates, plus adding dict instead of object
-    # Logical bug: append modifies global state in a thread-unsafe way, and missing schema check
+    # Fix: Check for duplicate ID before adding to prevent logical errors.
+    for existing_item in items_db:
+        if existing_item.id == item.id:
+            raise HTTPException(status_code=400, detail=f"Item with ID {item.id} already exists")
+    
+    # Fix: `item` is already a Pydantic Item object due to type hint, append it directly.
     items_db.append(item)
-    return {"message": "Success"}
+    return item # Return the newly created item as per REST best practices
 
-@app.delete("/items/{item_id}")
+@app.delete("/items/{item_id}", status_code=204) # Use 204 No Content for successful deletion
 def delete_item(item_id: int):
-    # BUG: IndexOutOfBounds / loop modifying list size runtime crash bug
-    # Logical bug: Modifying list during iteration
-    for i in range(len(items_db)):
-        if items_db[i]["id"] == item_id:
-            del items_db[i]
-            return {"status": "deleted"}
-    return {"status": "not found"}
+    item_index = -1
+    # Fix: Find the index of the item to be deleted to avoid issues when modifying during iteration.
+    for i, item in enumerate(items_db):
+        if item.id == item_id:
+            item_index = i
+            break # Found the item, exit loop
+
+    if item_index != -1:
+        del items_db[item_index]
+        # Fix: For a 204 No Content response, typically no body is returned.
+        return Response(status_code=204)
+    else:
+        # Fix: Raise 404 with a clear message if item not found.
+        raise HTTPException(status_code=404, detail=f"Item with ID {item_id} not found")

@@ -6,46 +6,77 @@ export default function ItemList() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    // BUG: Missing dependency array / infinite loop fetching
+    // FIX: Add empty dependency array to run effect only once on mount
     fetch('/items')
-      .then(res => res.json())
+      .then(res => {
+        // FIX: Check for HTTP errors
+        if (!res.ok) {
+          throw new Error(`HTTP error! Status: ${res.status}`);
+        }
+        return res.json();
+      })
       .then(data => {
-        // BUG: Directly assigning list without validation (might crash if not an array)
-        setItems(data);
+        // FIX: Validate data structure before setting state
+        if (Array.isArray(data)) {
+          setItems(data);
+        } else {
+          console.error('Fetched data is not an array:', data);
+          setError(new Error('Received invalid data from server.'));
+          setItems([]); // Default to empty array if data is invalid
+        }
         setLoading(false);
       })
       .catch(err => {
-        setError(err);
+        console.error("Error fetching items:", err); // Log the actual error
+        setError(err); // Store the error object
         setLoading(false);
       });
-  }); // BUG: No [] array here!
+  }, []); // FIX: Added empty dependency array to prevent infinite loop
 
   const deleteItem = (id) => {
-    // BUG: Typos in api url path or incorrect fetch parameter structure
+    // The fetch URL and method are generally correct for REST DELETE operations.
+    // Add robust error handling for the delete operation.
     fetch(`/items/${id}`, { method: 'DELETE' })
-      .then(res => res.json())
-      .then(result => {
-        // BUG: Directly modifying local state incorrectly
-        items.splice(items.findIndex(item => item.id === id), 1);
-        setItems(items); // React won't re-render because reference is the same!
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`Failed to delete item. Status: ${res.status}`);
+        }
+        // For a successful DELETE, the backend might return 200 OK with no body, or 204 No Content.
+        // We don't necessarily need to parse JSON. Just check success.
+        // If the backend returns JSON on delete, you'd parse it here.
+        return res.text(); // Consume the body if any, to avoid "body stream already read" warnings
+      })
+      .then(() => {
+        // FIX: Update state immutably by filtering out the deleted item
+        setItems(prevItems => prevItems.filter(item => item.id !== id));
+      })
+      .catch(err => {
+        console.error("Error deleting item:", err);
+        // Optionally, display a user-friendly error message, e.g., using a toast notification
+        // For this example, we'll just log and update the general error state.
+        setError(new Error(`Failed to delete item: ${err.message}`));
       });
   };
 
-  if (loading) return <div>Loading...</div>;
-  if (error) return <div>Error loading items</div>;
+  if (loading) return <div>Loading items...</div>;
+  // FIX: Display a more informative error message
+  if (error) return <div style={{ color: 'red' }}>Error loading items: {error.message}</div>;
 
   return (
     <div>
       <h1>Store Items</h1>
       <ul>
         {items.map(item => (
-          // BUG: Missing key prop in map loop
-          <li>
-            {item.name} - ${item.price.toFixed(2)}
+          // FIX: Add unique key prop for each list item
+          <li key={item.id}>
+            {item.name} - ${item.price ? item.price.toFixed(2) : 'N/A'} {/* FIX: Add check for item.price */}
             <button onClick={() => deleteItem(item.id)}>Delete</button>
           </li>
         ))}
       </ul>
+      {items.length === 0 && !loading && !error && (
+        <p>No items found.</p>
+      )}
     </div>
   );
 }
